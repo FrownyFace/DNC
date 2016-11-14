@@ -24,7 +24,7 @@ class DNC:
         self.nn_input_size = num_heads * word_size + input_size
         self.nn_output_size = output_size + self.interface_size
 
-        self.interface_vec = tf.Variable(tf.truncated_normal([self.interface_size]), name='Interface Vector')
+        self.interface_vec = tf.truncated_normal([1, self.interface_size])
 
         self.mem_mat = tf.zeros([num_words, word_size]) #N*W
         self.usage_vec = tf.fill([num_words, 1], 1e-6) #N*1
@@ -35,6 +35,11 @@ class DNC:
         self.write_weights = tf.fill([num_words, 1], 1e-6) #N*1
 
         self.read_vecs = tf.fill([num_words, num_heads], 1e-6) #N*R
+
+        self.W1 = tf.Variable(tf.truncated_normal([self.nn_input_size,128]), stdev=0.1, name='Layer 1 Weights', dtype=tf.float32)
+        self.b1 = tf.Variable(tf.zeros([128]), name='Layer 1 Bias', dtype=tf.float32)
+        self.W2 = tf.Variable(tf.truncated_normal([128,256]), stdev=0.1, name='Layer 2 Weights', dtype=tf.float32)
+        self.b2 = tf.Variable(tf.zeros([256]), name='Layer 2 Bias', dtype=tf.float32)
 
     def content_lookup(self, key, str):
         norm_mem = tf.nn.l2_normalize(self.mem_mat, dim=1) #N*W
@@ -48,11 +53,14 @@ class DNC:
         cumprod = tf.cumprod(sorted_usage_vec, axis=0, exclusive=False)
         return (1-sorted_usage_vec)*cumprod
 
+    def step_m(self, x):
+        flat_read_vec = tf.reshape(self.read_vecs, [1, self.word_size*self.num_heads])
+        input = tf.concat(1, [x, flat_read_vec])
 
-    def step_m(self):
-        #####################
-        ### Network goes here
-        #####################
+        l1_out = tf.matmul(input, self.W1) + self.b1
+        l1_act = tf.nn.relu(l1_out)
+        l2_out = tf.matmul(l1_act, self.W2) + self.b2
+        l2_act = tf.nn.relu(l2_out)
 
         partition = [0]*(self.num_heads*self.word_size) + [1]*(self.num_heads) + [2]*(self.word_size) + [3] + \
                     [4]*(self.word_size) + [5]*(self.word_size) + [6]*(self.num_heads) + [7] + [8] + [9]*(self.num_heads*3)
@@ -85,10 +93,9 @@ class DNC:
 
         self.precedence_weight = (1-tf.reduce_sum(self.write_weights, reduction_indices=0))*self.precedence_weight + self.write_weights
 
-        forw_w = read_modes[2]*tf.matmul(self.link_mat, self.read_weights) #N*R
+        forw_w = read_modes[2]*tf.matmul(self.link_mat, self.read_weights) #(N*N,N*R)->N*R
         look_w = read_modes[1]*self.content_lookup(read_keys, read_str) #N*R
         back_w = read_modes[0]*tf.matmul(self.link_mat, self.read_weights, transpose_b=True) #N*R
 
         self.read_weights = back_w + look_w + forw_w #N*R
-        self.read_vecs = tf.matmul(self.link_mat,self.read_weights) #(N*N,N*R)->N*R
-
+        self.read_vecs = tf.matmul(self.mem_mat, self.read_weights, transpose_a=True) #(W*N,N*R)->W*R
