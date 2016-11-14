@@ -62,6 +62,9 @@ class DNC:
         l2_out = tf.matmul(l1_act, self.W2) + self.b2
         l2_act = tf.nn.relu(l2_out)
 
+        nn_out = tf.splice(l2_out, [0, 0], [-1, self.output_size])
+        self.interface_vec = tf.splice(l2_act, [0, self.output_size], [-1,-1])
+
         partition = [0]*(self.num_heads*self.word_size) + [1]*(self.num_heads) + [2]*(self.word_size) + [3] + \
                     [4]*(self.word_size) + [5]*(self.word_size) + [6]*(self.num_heads) + [7] + [8] + [9]*(self.num_heads*3)
 
@@ -70,7 +73,7 @@ class DNC:
 
         read_keys = tf.reshape(read_keys,[self.num_heads, self.word_size]) #R*W
         read_str = 1 + tf.nn.softplus(tf.expand_dims(read_str, 0)) #1*R
-        write_key = tf.expand_dims(write_key, 0)#1*W
+        write_key = tf.expand_dims(write_key, 0) #1*W
         write_str = 1 + tf.nn.softplus(tf.expand_dims(write_str, 0)) #1*1
         erase_vec = tf.nn.sigmoid(tf.expand_dims(erase_vec, 0)) #1*W
         write_vec = tf.expand_dims(write_vec, 0) #1*W
