@@ -38,18 +38,18 @@ class DNC:
         self.read_vecs = tf.fill([num_heads, word_size], 1e-6) #R*W
 
         ###NETWORK VARIABLES
-        self.i_data = tf.placeholder(tf.float32, [1, self.input_size], name='Input Node')
-        self.o_data = tf.placeholder(tf.float32, [1, self.output_size], name='Output Node')
+        self.i_data = tf.placeholder(tf.float32, [1, self.input_size], name='input_node')
+        self.o_data = tf.placeholder(tf.float32, [1, self.output_size], name='output_node')
 
-        self.W1 = tf.Variable(tf.truncated_normal([self.nn_input_size, 128], stddev=0.1), name='Layer 1 Weights', dtype=tf.float32)
-        self.b1 = tf.Variable(tf.zeros([128]), name='Layer 1 Bias', dtype=tf.float32)
-        self.W2 = tf.Variable(tf.truncated_normal([128, self.nn_output_size], stddev=0.1), name='Layer 2 Weights', dtype=tf.float32)
-        self.b2 = tf.Variable(tf.zeros([self.nn_output_size]), name='Layer 2 Bias', dtype=tf.float32)
+        self.W1 = tf.Variable(tf.truncated_normal([self.nn_input_size, 128], stddev=0.1), name='layer1_weights', dtype=tf.float32)
+        self.b1 = tf.Variable(tf.zeros([128]), name='layer1_bias', dtype=tf.float32)
+        self.W2 = tf.Variable(tf.truncated_normal([128, self.nn_output_size], stddev=0.1), name='layer2_weights', dtype=tf.float32)
+        self.b2 = tf.Variable(tf.zeros([self.nn_output_size]), name='layer2_bias', dtype=tf.float32)
 
         ###DNC OUTPUT WEIGHTS
-        self.nn_out_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.output_size], stddev=1.0), name='Net Output Weights')
-        self.interface_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.interface_size], stddev=1.0), name='Interface Weights')
-        self.read_vecs_out_weight = tf.Variable(tf.truncated_normal([self.num_heads*self.word_size, self.output_size], stddev=1.0), name='Read Vector Weights')
+        self.nn_out_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.output_size], stddev=1.0), name='net_output_weights')
+        self.interface_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.interface_size], stddev=1.0), name='interface_weights')
+        self.read_vecs_out_weight = tf.Variable(tf.truncated_normal([self.num_heads*self.word_size, self.output_size], stddev=1.0), name='read_vector_weights')
 
     def content_lookup(self, key, str):
         norm_mem = tf.nn.l2_normalize(self.mem_mat, dim=1) #N*W
@@ -125,18 +125,25 @@ class DNC:
                                  self.read_vecs_out_weight)  # (1*RW, RW*Y)-> (1*Y)
         return self.nn_out+read_vec_mut
 
-    def run(self):
-
-
 def main(argv=None):
-    dnc = DNC(input_size=6, output_size=6, num_words=16, word_size=8, num_heads=2)
+    num_seq = 10
+    seq_len = 5
+    seq_width = 5
+    seq = np.random.randint(2, size=seq_len*seq_width).reshape([seq_len, seq_width])
+    end = np.asarray([[0]*(seq_width-1)+[1]])
+    zer = np.zeros((seq_len-1, seq_width))
+
+    dnc = DNC(input_size=5, output_size=5, num_words=8, word_size=4, num_heads=1)
     output = dnc.step_m(dnc.i_data)
     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, dnc.o_data))
     regularizers = (tf.nn.l2_loss(dnc.W1) + tf.nn.l2_loss(dnc.W2) +
                     tf.nn.l2_loss(dnc.b1) + tf.nn.l2_loss(dnc.b2))
     loss += 5e-4 * regularizers
     optimizer = tf.train.AdamOptimizer(0.01).minimize(loss)
+
     with tf.Session() as sess:
+        final_i_data = np.concatenate((seq, end, zer), axis=0)
+        final_o_data = np.concatenate((np.zeros((seq_len, seq_width)), seq), axis=0)
         tf.initialize_all_variables().run()
         print('Initialized!')
         feed_dict = {dnc.i_data : final_i_data, dnc.o_data : final_o_data}
