@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import os
 
 
 class DNC:
@@ -142,35 +143,46 @@ class DNC:
             big_out.append(y)
         return tf.pack(big_out, axis=0)
 
+def binary_cross_entropy(predictions, targets):
+
+    return tf.reduce_mean((-1 * targets * tf.log(predictions)) - ((1 - targets) * tf.log(1 - predictions)))
+
 def main(argv=None):
     num_seq = 10
-    seq_len = 4
+    seq_len = 2
     seq_width = 4
+    iterations = 20000
     con = np.random.randint(0, seq_width,size=seq_len)
     seq = np.zeros((seq_len, seq_width))
     seq[np.arange(seq_len), con] = 1
     zer = np.zeros((seq_len, seq_width))
 
     dnc = DNC(input_size=seq_width, output_size=seq_width, seq_len=seq_len, num_words=8, word_size=4, num_heads=1)
-    output = dnc.run()
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, dnc.o_data))
+    output = tf.clip_by_value(tf.sigmoid(dnc.run()), 1e-6, 1-1e-6)
+    loss = binary_cross_entropy(output, dnc.o_data)
+    #output = dnc.run()
+    #loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, dnc.o_data))
     regularizers = (tf.nn.l2_loss(dnc.W1) + tf.nn.l2_loss(dnc.W2) +
                     tf.nn.l2_loss(dnc.b1) + tf.nn.l2_loss(dnc.b2))
     loss += 5e-4 * regularizers
-    optimizer = tf.train.AdamOptimizer(0.01).minimize(loss)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
 
     with tf.Session() as sess:
         tf.initialize_all_variables().run()
         final_i_data = np.concatenate((seq, zer), axis=0)
         final_o_data = np.concatenate((zer, seq), axis=0)
-        for i in range(0, 100):
+        for i in range(0, iterations):
             feed_dict = {dnc.i_data: final_i_data, dnc.o_data: final_o_data}
             l, _, predictions = sess.run([loss, optimizer, output], feed_dict=feed_dict)
             if i%100==0:
-                print(i)
+                print(i,l)
+
         print(final_i_data)
         print(final_o_data)
         print(predictions)
+
+        dir = os.path.dirname(__file__)
+        tf.train.Saver(tf.trainable_variables(), write_version=tf.train.SaverDef.V2).save(sess, os.path.join(dir, 'm2.ckpt'))
 
 if __name__ == '__main__':
     tf.app.run()
