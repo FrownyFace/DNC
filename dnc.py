@@ -41,9 +41,9 @@ class DNC:
         self.i_data = tf.placeholder(tf.float32, [seq_len*2, self.input_size], name='input_node')
         self.o_data = tf.placeholder(tf.float32, [seq_len*2, self.output_size], name='output_node')
 
-        self.W1 = tf.Variable(tf.truncated_normal([self.nn_input_size, 128], stddev=0.1), name='layer1_weights', dtype=tf.float32)
-        self.b1 = tf.Variable(tf.zeros([128]), name='layer1_bias', dtype=tf.float32)
-        self.W2 = tf.Variable(tf.truncated_normal([128, self.nn_output_size], stddev=0.1), name='layer2_weights', dtype=tf.float32)
+        self.W1 = tf.Variable(tf.truncated_normal([self.nn_input_size, 32], stddev=0.1), name='layer1_weights', dtype=tf.float32)
+        self.b1 = tf.Variable(tf.zeros([32]), name='layer1_bias', dtype=tf.float32)
+        self.W2 = tf.Variable(tf.truncated_normal([32, self.nn_output_size], stddev=0.1), name='layer2_weights', dtype=tf.float32)
         self.b2 = tf.Variable(tf.zeros([self.nn_output_size]), name='layer2_bias', dtype=tf.float32)
 
         ###DNC OUTPUT WEIGHTS
@@ -52,16 +52,25 @@ class DNC:
         self.read_vecs_out_weight = tf.Variable(tf.truncated_normal([self.num_heads*self.word_size, self.output_size], stddev=1.0), name='read_vector_weights')
 
     def content_lookup(self, key, str):
-        norm_mem = tf.nn.l2_normalize(self.mem_mat, dim=1) #N*W
-        norm_key = tf.nn.l2_normalize(key, dim=0) #1*1 for write, 1*R for read
-        sim = tf.matmul(norm_mem, norm_key, transpose_b=True) #N*1 for write, N*R for read
-        return tf.nn.softmax(sim*str, dim=1)
+        norm_mem = tf.nn.l2_normalize(self.mem_mat, 1) #N*W
+        norm_key = tf.nn.l2_normalize(key, 0) #1*W for write or R*W for read
+        sim = tf.matmul(norm_mem, norm_key, transpose_b=True) #(N*W,W*1)->N*1 or (N*W,W*R)->N*R
+        #str is 1*1 or 1*R
+        return tf.nn.softmax(sim*str, 0) #N*1 or N*R
 
     def allocation_weighting(self):
-        sorted_usage_vec, free_list = tf.nn.top_k(-1 * tf.squeeze(self.usage_vec), k=self.num_words)
+        sorted_usage_vec, free_list = tf.nn.top_k(-1 * self.usage_vec, k=self.num_words)
         sorted_usage_vec *= -1
-        cumprod = tf.cumprod(sorted_usage_vec, axis=0, exclusive=False)
-        return (1-sorted_usage_vec)*cumprod
+        cumprod = tf.cumprod(sorted_usage_vec, axis=0, exclusive=True)
+        unorder = (1-sorted_usage_vec)*cumprod
+
+        alloc_weights = tf.zeros([self.num_words])
+        I = tf.constant(np.identity(self.num_words, dtype=np.float32))
+
+        for pos, idx in enumerate(tf.unpack(free_list[0])):
+            m = tf.squeeze(tf.slice(I, [idx, 0], [1, -1]))
+            alloc_weights += m*unorder[0, pos]
+        return tf.reshape(alloc_weights, [self.num_words, 1])
 
     def step_m(self, x):
         input = tf.concat(1, [x, tf.reshape(self.read_vecs, [1, self.num_heads*self.word_size])])
@@ -100,7 +109,7 @@ class DNC:
         self.usage_vec = (self.usage_vec + self.write_weights - self.usage_vec * self.write_weights) * retention_vec
 
         alloc_weights = self.allocation_weighting() #N*1
-        write_lookup_weights = tf.squeeze(self.content_lookup(write_key, write_str)) #N*1
+        write_lookup_weights = self.content_lookup(write_key, write_str) #N*1
         self.write_weights = write_gate*(alloc_gate*alloc_weights + (1-alloc_gate)*write_lookup_weights)
 
         self.mem_mat = self.mem_mat*(1-tf.matmul(self.write_weights, erase_vec)) + \
@@ -108,8 +117,8 @@ class DNC:
 
         nnweight_vec = tf.matmul(self.write_weights, tf.ones([1,self.num_words])) #N*N
         self.link_mat = (1 - nnweight_vec - tf.transpose(nnweight_vec))*self.link_mat + \
-                        tf.matmul(self.write_weights, tf.transpose(self.precedence_weight))
-        self.link_mat *= tf.ones([self.num_words, self.num_words]) - tf.eye(self.num_words,self.num_words)
+                        tf.matmul(self.write_weights, self.precedence_weight, transpose_b=True)
+        self.link_mat *= tf.ones([self.num_words, self.num_words]) - tf.constant(np.identity(self.num_words, dtype=np.float32))
 
         self.precedence_weight = (1-tf.reduce_sum(self.write_weights, reduction_indices=0)) * \
                                  self.precedence_weight + self.write_weights
@@ -135,13 +144,14 @@ class DNC:
 
 def main(argv=None):
     num_seq = 10
-    seq_len = 5
-    seq_width = 5
-    seq = np.random.randint(2, size=seq_len*seq_width).reshape([seq_len, seq_width])
-    end = np.asarray([[0]*(seq_width-1)+[1]])
-    zer = np.zeros((seq_len-1, seq_width))
+    seq_len = 4
+    seq_width = 4
+    con = np.random.randint(0, seq_width,size=seq_len)
+    seq = np.zeros((seq_len, seq_width))
+    seq[np.arange(seq_len), con] = 1
+    zer = np.zeros((seq_len, seq_width))
 
-    dnc = DNC(input_size=5, output_size=5, seq_len=5, num_words=8, word_size=4, num_heads=1)
+    dnc = DNC(input_size=seq_width, output_size=seq_width, seq_len=seq_len, num_words=8, word_size=4, num_heads=1)
     output = dnc.run()
     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, dnc.o_data))
     regularizers = (tf.nn.l2_loss(dnc.W1) + tf.nn.l2_loss(dnc.W2) +
@@ -151,13 +161,16 @@ def main(argv=None):
 
     with tf.Session() as sess:
         tf.initialize_all_variables().run()
-        final_i_data = np.concatenate((seq, end, zer), axis=0)
-        final_o_data = np.concatenate((np.zeros((seq_len, seq_width)), seq), axis=0)
-        for i in range(0,100):
+        final_i_data = np.concatenate((seq, zer), axis=0)
+        final_o_data = np.concatenate((zer, seq), axis=0)
+        for i in range(0, 100):
             feed_dict = {dnc.i_data: final_i_data, dnc.o_data: final_o_data}
             l, _, predictions = sess.run([loss, optimizer, output], feed_dict=feed_dict)
-            if i%10==0:
-                print(predictions.eval())
+            if i%100==0:
+                print(i)
+        print(final_i_data)
+        print(final_o_data)
+        print(predictions)
 
 if __name__ == '__main__':
     tf.app.run()
