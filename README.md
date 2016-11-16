@@ -18,7 +18,7 @@ the targeted output is
 [1 0]
 [0 1]]
 
-With the sequence length = 4 and sequence width = 4, a DNC(num_words=10, words_size=4, num_heads=1) converges in less than 1000 iterations.
+With the sequence length = 6 and sequence width = 4, a DNC(num_words=10, words_size=4, num_heads=1) converges in less than 1000 iterations.
 
 # TODO
-As you increase num_words or word_size, the DNC's output goes to positive infinity as does the loss. Need to figure out why.
+As you increase num_words or word_size, the DNC's output goes to positive infinity as does the loss. Need to figure out why. The loss also randomly goes to infinity when its heading towards zero
