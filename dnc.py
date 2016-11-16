@@ -48,9 +48,9 @@ class DNC:
         self.b2 = tf.Variable(tf.zeros([self.nn_output_size]), name='layer2_bias', dtype=tf.float32)
 
         ###DNC OUTPUT WEIGHTS
-        self.nn_out_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.output_size], stddev=1.0), name='net_output_weights')
-        self.interface_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.interface_size], stddev=1.0), name='interface_weights')
-        self.read_vecs_out_weight = tf.Variable(tf.truncated_normal([self.num_heads*self.word_size, self.output_size], stddev=1.0), name='read_vector_weights')
+        self.nn_out_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.output_size], stddev=0.1), name='net_output_weights')
+        self.interface_weights = tf.Variable(tf.truncated_normal([self.nn_output_size, self.interface_size], stddev=0.1), name='interface_weights')
+        self.read_vecs_out_weight = tf.Variable(tf.truncated_normal([self.num_heads*self.word_size, self.output_size], stddev=0.1), name='read_vector_weights')
 
     def content_lookup(self, key, str):
         norm_mem = tf.nn.l2_normalize(self.mem_mat, 1) #N*W
@@ -77,9 +77,9 @@ class DNC:
         input = tf.concat(1, [x, tf.reshape(self.read_vecs, [1, self.num_heads*self.word_size])])
 
         l1_out = tf.matmul(input, self.W1) + self.b1
-        l1_act = tf.nn.relu(l1_out)
+        l1_act = tf.nn.tanh(l1_out)
         l2_out = tf.matmul(l1_act, self.W2) + self.b2
-        l2_act = tf.nn.relu(l2_out)
+        l2_act = tf.nn.tanh(l2_out)
 
         #eta = interface vec size
         #Y = output size
@@ -142,16 +142,13 @@ class DNC:
             big_out.append(y)
         return tf.pack(big_out, axis=0)
 
-def binary_cross_entropy(predictions, targets):
-    return tf.reduce_mean((-1 * targets * tf.log(predictions)) - ((1 - targets) * tf.log(1 - predictions)))
-
 def main(argv=None):
     #dir = os.path.dirname(__file__)
     #logs_dir = os.path.join(dir, 'logs')
     #mods_dir = os.path.join(dir, 'models')
 
     num_seq = 10
-    seq_len = 4
+    seq_len = 6
     seq_width = 4
     iterations = 1000
     con = np.random.randint(0, seq_width,size=seq_len)
@@ -160,15 +157,11 @@ def main(argv=None):
     end = np.asarray([[-1]*seq_width])
     zer = np.zeros((seq_len, seq_width))
 
-    #output = dnc.run()
-    #loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(output, dnc.o_data))
     graph = tf.Graph()
 
     with graph.as_default():
         with tf.Session() as sess:
-            dnc = DNC(input_size=seq_width, output_size=seq_width, seq_len=seq_len, num_words=10, word_size=10, num_heads=1)
-            #output = tf.sigmoid(dnc.run())
-            #loss = binary_cross_entropy(output, dnc.o_data)
+            dnc = DNC(input_size=seq_width, output_size=seq_width, seq_len=seq_len, num_words=10, word_size=4, num_heads=1)
 
             output = tf.squeeze(dnc.run())
             loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(output, dnc.o_data))
@@ -177,19 +170,13 @@ def main(argv=None):
                             tf.nn.l2_loss(dnc.b1) + tf.nn.l2_loss(dnc.b2))
             loss += 5e-4 * regularizers
             optimizer = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
-            #summ = tf.train.SummaryWriter(logs_dir,graph)
-            #summ_l = []
-            #summ_l.append(tf.scalar_summary("Loss", loss))
-            #summ_op = tf.merge_summary(summ_l)
 
             tf.initialize_all_variables().run()
-            #final_i_data = np.concatenate((seq, end, zer[:-1]), axis=0)
             final_i_data = np.concatenate((seq, zer), axis=0)
             final_o_data = np.concatenate((zer, seq), axis=0)
-            for i in range(0, iterations):
+            for i in range(0, iterations+1):
                 feed_dict = {dnc.i_data: final_i_data, dnc.o_data: final_o_data}
                 l, _, predictions = sess.run([loss, optimizer, output], feed_dict=feed_dict)
-                #summ.add_summary(summary)
                 if i%100==0:
                     print(i,l)
 
@@ -197,7 +184,6 @@ def main(argv=None):
             print(final_o_data)
             print(predictions)
 
-            #
             #tf.train.Saver(tf.trainable_variables(), write_version=tf.train.SaverDef.V2).save(sess, os.path.join(dir, 'm2.ckpt'))
 
 if __name__ == '__main__':
